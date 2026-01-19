@@ -40,8 +40,9 @@ jobs:
             platform-tools
 
       # 步骤1: 判断是否需要生成新密钥（无 Secrets 时首次生成）
+      # 修复点：用 ${{ }} 完整包裹表达式，判断 Secrets 是否为空字符串
       - name: Generate Keystore (First Run Only)
-        if: ${{ !secrets.KEYSTORE_BASE64 }}
+        if: ${{ !secrets.KEYSTORE_BASE64 || secrets.KEYSTORE_BASE64 == '' }}
         run: |
           # 生成随机强密码（16位）
           KEYSTORE_PASSWORD=$(openssl rand -hex 8)
@@ -78,8 +79,9 @@ jobs:
           echo "KEYSTORE_BASE64=$KEYSTORE_BASE64" >> $GITHUB_ENV
 
       # 步骤2: 后续运行读取 Secrets 还原密钥库
+      # 修复点：用 ${{ }} 完整包裹表达式，判断 Secrets 非空
       - name: Restore Keystore from Secrets (Subsequent Runs)
-        if: ${{ secrets.KEYSTORE_BASE64 }}
+        if: ${{ secrets.KEYSTORE_BASE64 && secrets.KEYSTORE_BASE64 != '' }}
         run: |
           # 从 Secrets 读取 Base64 并还原密钥库文件
           echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > $KEYSTORE_FILE
@@ -90,8 +92,9 @@ jobs:
           echo "✅ 后续运行：从 Secrets 还原密钥库完成"
 
       # 步骤3: 提交密钥信息文件到仓库（仅首次运行）
+      # 修复点：用 ${{ }} 完整包裹表达式
       - name: Commit Keystore Info to Repo
-        if: ${{ !secrets.KEYSTORE_BASE64 }}
+        if: ${{ !secrets.KEYSTORE_BASE64 || secrets.KEYSTORE_BASE64 == '' }}
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
@@ -108,7 +111,7 @@ jobs:
           echo "VERSION_CODE=${GITHUB_RUN_NUMBER}" >> $GITHUB_ENV
           echo "TAG_NAME=v1.0.${GITHUB_RUN_NUMBER}" >> $GITHUB_ENV
 
-      # 步骤5: 构建 + 签名 + 重命名 + 上传 + 发布 （和之前逻辑一致）
+      # 步骤5: 构建 + 签名 + 重命名 + 上传 + 发布
       - name: Grant execute permission to gradlew
         run: chmod +x gradlew
 
