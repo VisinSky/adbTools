@@ -4,7 +4,6 @@ on:
   workflow_dispatch: # 仅手动触发
   push:
     branches: [ main ]
-    paths-ignore: [ "keystore_info.txt" ]
 
 jobs:
   build:
@@ -16,7 +15,6 @@ jobs:
       KEY_ALIAS: myadbkey
       KEYSTORE_FILE: ./keystore.jks
       CERT_DNAME: "CN=adbTools, OU=GitHubActions, O=VisinSky, L=Unknown, ST=Unknown, C=CN"
-      KEY_INFO_FILE: keystore_info.txt
       # Android SDK 配置
       ANDROID_HOME: /usr/local/lib/android/sdk
       ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
@@ -36,7 +34,7 @@ jobs:
           distribution: 'temurin'
           cache: gradle
 
-      # 手动安装Android SDK（稳定无兼容问题）
+      # 手动安装Android SDK
       - name: Manually install Android SDK components
         run: |
           export PATH=$ANDROID_HOME/cmdline-tools/latest/bin:$PATH
@@ -57,7 +55,7 @@ jobs:
             echo "✅ 检测到密钥Secrets，将执行还原签名逻辑"
           fi
 
-      # 首次运行生成新密钥
+      # 首次运行生成新密钥（核心修改：日志输出密钥信息，不推送文件）
       - name: Generate Keystore (First Run Only)
         if: ${{ steps.check_secrets.outputs.is_first_run == 'true' }}
         run: |
@@ -80,14 +78,20 @@ jobs:
           # 密钥库转Base64编码
           KEYSTORE_BASE64=$(base64 -w 0 $KEYSTORE_FILE)
           
-          # 写入信息到文本文件
-          echo "=== adbTools 密钥库信息（请妥善保管，配置完Secrets后删除此文件）===" > $KEY_INFO_FILE
-          echo "KEY_ALIAS: $KEY_ALIAS" >> $KEY_INFO_FILE
-          echo "KEYSTORE_PASSWORD: $KEYSTORE_PASSWORD" >> $KEY_INFO_FILE
-          echo "KEY_PASSWORD: $KEY_PASSWORD" >> $KEY_INFO_FILE
-          echo "KEYSTORE_BASE64: $KEYSTORE_BASE64" >> $KEY_INFO_FILE
+          # 核心修改：将密钥信息打印到Actions日志（重点！你从这里复制）
+          echo "=============================================="
+          echo "========== 首次运行：密钥库信息如下 =========="
+          echo "⚠️  请立即复制以下信息，配置到仓库Secrets中 ⚠️"
+          echo "=============================================="
+          echo "KEY_ALIAS: $KEY_ALIAS"
+          echo "KEYSTORE_PASSWORD: $KEYSTORE_PASSWORD"
+          echo "KEY_PASSWORD: $KEY_PASSWORD"
+          echo "KEYSTORE_BASE64: $KEYSTORE_BASE64"
+          echo "=============================================="
+          echo "配置完成后，重新手动触发本工作流即可正常签名APK"
+          echo "=============================================="
           
-          # 临时保存到环境变量
+          # 临时保存到环境变量（本次构建用）
           echo "KEYSTORE_PASSWORD=$KEYSTORE_PASSWORD" >> $GITHUB_ENV
           echo "KEY_PASSWORD=$KEY_PASSWORD" >> $GITHUB_ENV
           echo "KEYSTORE_BASE64=$KEYSTORE_BASE64" >> $GITHUB_ENV
@@ -103,17 +107,6 @@ jobs:
           echo "KEYSTORE_PASSWORD=${{ secrets.KEYSTORE_PASSWORD }}" >> $GITHUB_ENV
           echo "KEY_PASSWORD=${{ secrets.KEY_PASSWORD }}" >> $GITHUB_ENV
 
-      # 提交密钥信息文件到仓库（仅首次运行）
-      - name: Commit Keystore Info to Repo
-        if: ${{ steps.check_secrets.outputs.is_first_run == 'true' }}
-        run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git add $KEY_INFO_FILE
-          git commit -m "chore: add keystore info file (auto-generated)"
-          git push origin main
-          echo "✅ 密钥信息文件已提交到仓库，请立即查看并配置Secrets，配置完成后删除此文件！"
-
       # 生成自动版本号
       - name: Generate version info
         id: version
@@ -122,25 +115,23 @@ jobs:
           echo "VERSION_CODE=${GITHUB_RUN_NUMBER}" >> $GITHUB_ENV
           echo "TAG_NAME=v1.0.${GITHUB_RUN_NUMBER}" >> $GITHUB_ENV
 
-      # 构建 + 签名（核心修复：适配sign-android-release参数） + 上传 + 发布
+      # 构建 + 签名 + 上传 + 发布
       - name: Grant execute permission to gradlew
         run: chmod +x gradlew
 
       - name: Build unsigned Release APK
         run: ./gradlew assembleRelease -PversionName=${{ env.VERSION_NAME }} -PversionCode=${{ env.VERSION_CODE }} --no-daemon
 
-      # 修复签名步骤：移除无效参数，改用signingKeyBase64传递密钥库
+      # 签名步骤（适配参数，无无效参数）
       - name: Sign APK
         id: sign_apk
         uses: r0adkll/sign-android-release@v1
         with:
           releaseDirectory: app/build/outputs/apk/release
-          # 核心修改：用signingKeyBase64替代keyStoreFile（该Action的标准用法）
           signingKeyBase64: ${{ env.KEYSTORE_BASE64 || secrets.KEYSTORE_BASE64 }}
           alias: ${{ env.KEY_ALIAS }}
           keyStorePassword: ${{ env.KEYSTORE_PASSWORD }}
           keyPassword: ${{ env.KEY_PASSWORD }}
-          # 移除无效的buildToolsVersion参数
 
       - name: Rename signed APK
         run: |
