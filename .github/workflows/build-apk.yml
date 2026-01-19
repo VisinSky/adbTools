@@ -12,11 +12,16 @@ jobs:
     permissions:
       contents: write # 必须授予写入仓库权限
     env:
-      # 基础配置（可根据需要修改）
+      # 基础配置
       KEY_ALIAS: myadbkey
       KEYSTORE_FILE: ./keystore.jks
       CERT_DNAME: "CN=adbTools, OU=GitHubActions, O=VisinSky, L=Unknown, ST=Unknown, C=CN"
-      KEY_INFO_FILE: keystore_info.txt # 存储密钥信息的文本文件
+      KEY_INFO_FILE: keystore_info.txt
+      # Android SDK 配置（手动指定稳定版本）
+      ANDROID_HOME: /usr/local/lib/android/sdk
+      ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+      BUILD_TOOLS_VERSION: 33.0.2
+      ANDROID_PLATFORM_VERSION: android-33
 
     steps:
       - name: Checkout code
@@ -31,28 +36,26 @@ jobs:
           distribution: 'temurin'
           cache: gradle
 
-      # 修复Android SDK安装问题：
-      # 1. 改用更稳定的build-tools版本（33.0.2）
-      # 2. 规范packages参数格式（每个包单独一行）
-      # 3. 提前接受SDK许可，避免交互阻塞
-      - name: Accept Android SDK licenses
+      # 核心修复：手动安装 Android SDK（替代第三方Action）
+      - name: Manually install Android SDK components
         run: |
-          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses || true
+          # 1. 配置环境变量，确保sdkmanager可执行
+          export PATH=$ANDROID_HOME/cmdline-tools/latest/bin:$PATH
+          
+          # 2. 自动接受所有SDK许可（关键）
+          echo "y" | sdkmanager --licenses || true
+          
+          # 3. 安装必要的SDK组件（稳定版本）
+          echo "y" | sdkmanager "platform-tools" "platforms;${ANDROID_PLATFORM_VERSION}" "build-tools;${BUILD_TOOLS_VERSION}"
+          
+          # 4. 验证安装结果
+          echo "✅ Android SDK 安装完成，已安装组件："
+          sdkmanager --list_installed
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-        with:
-          # 规范格式：每个包单独一行，去掉多余换行/空格
-          packages: |
-            build-tools;33.0.2
-            platforms;android-33
-            platform-tools
-
-      # 关键修复步骤：前置判断Secrets是否存在，输出标记变量
+      # 关键步骤：前置判断Secrets是否存在，输出标记变量
       - name: Check if keystore secrets exist
         id: check_secrets
         run: |
-          # 判断KEYSTORE_BASE64 Secret是否存在且非空
           if [ -z "${{ secrets.KEYSTORE_BASE64 }}" ] || [ "${{ secrets.KEYSTORE_BASE64 }}" = "" ]; then
             echo "is_first_run=true" >> $GITHUB_OUTPUT
             echo "✅ 检测到无密钥Secrets，将执行首次生成逻辑"
@@ -61,7 +64,7 @@ jobs:
             echo "✅ 检测到密钥Secrets，将执行还原签名逻辑"
           fi
 
-      # 步骤1: 首次运行生成新密钥（仅is_first_run=true时执行）
+      # 步骤1: 首次运行生成新密钥
       - name: Generate Keystore (First Run Only)
         if: ${{ steps.check_secrets.outputs.is_first_run == 'true' }}
         run: |
@@ -81,25 +84,22 @@ jobs:
             -keypass $KEY_PASSWORD \
             -noprompt
           
-          # 将密钥库转Base64编码（便于文本存储）
+          # 将密钥库转Base64编码
           KEYSTORE_BASE64=$(base64 -w 0 $KEYSTORE_FILE)
           
-          # 写入信息到文本文件（含Base64和密码）
+          # 写入信息到文本文件
           echo "=== adbTools 密钥库信息（请妥善保管）===" > $KEY_INFO_FILE
           echo "KEY_ALIAS: $KEY_ALIAS" >> $KEY_INFO_FILE
           echo "KEYSTORE_PASSWORD: $KEYSTORE_PASSWORD" >> $KEY_INFO_FILE
           echo "KEY_PASSWORD: $KEY_PASSWORD" >> $KEY_INFO_FILE
           echo "KEYSTORE_BASE64: $KEYSTORE_BASE64" >> $KEY_INFO_FILE
           
-          # 输出提示（便于日志查看）
-          echo "✅ 首次运行：密钥库生成完成，信息已写入$KEY_INFO_FILE"
-          
-          # 临时保存到环境变量，供后续步骤使用
+          # 临时保存到环境变量
           echo "KEYSTORE_PASSWORD=$KEYSTORE_PASSWORD" >> $GITHUB_ENV
           echo "KEY_PASSWORD=$KEY_PASSWORD" >> $GITHUB_ENV
           echo "KEYSTORE_BASE64=$KEYSTORE_BASE64" >> $GITHUB_ENV
 
-      # 步骤2: 后续运行读取Secrets还原密钥库（仅is_first_run=false时执行）
+      # 步骤2: 后续运行读取Secrets还原密钥库
       - name: Restore Keystore from Secrets (Subsequent Runs)
         if: ${{ steps.check_secrets.outputs.is_first_run == 'false' }}
         run: |
@@ -109,7 +109,6 @@ jobs:
           # 读取密码到环境变量
           echo "KEYSTORE_PASSWORD=${{ secrets.KEYSTORE_PASSWORD }}" >> $GITHUB_ENV
           echo "KEY_PASSWORD=${{ secrets.KEY_PASSWORD }}" >> $GITHUB_ENV
-          echo "✅ 后续运行：从Secrets还原密钥库完成"
 
       # 步骤3: 提交密钥信息文件到仓库（仅首次运行）
       - name: Commit Keystore Info to Repo
@@ -120,7 +119,6 @@ jobs:
           git add $KEY_INFO_FILE
           git commit -m "chore: add keystore info file (auto-generated)"
           git push origin main
-          echo "✅ 密钥信息文件已提交到仓库，请立即查看并配置Secrets！"
 
       # 步骤4: 生成自动版本号
       - name: Generate version info
@@ -130,7 +128,7 @@ jobs:
           echo "VERSION_CODE=${GITHUB_RUN_NUMBER}" >> $GITHUB_ENV
           echo "TAG_NAME=v1.0.${GITHUB_RUN_NUMBER}" >> $GITHUB_ENV
 
-      # 步骤5: 构建 + 签名 + 重命名 + 上传 + 发布
+      # 步骤5: 构建 + 签名 + 上传 + 发布
       - name: Grant execute permission to gradlew
         run: chmod +x gradlew
 
@@ -146,7 +144,7 @@ jobs:
           keyStoreFile: ${{ env.KEYSTORE_FILE }}
           keyStorePassword: ${{ env.KEYSTORE_PASSWORD }}
           keyPassword: ${{ env.KEY_PASSWORD }}
-          buildToolsVersion: 33.0.2 # 同步修改为33.0.2
+          buildToolsVersion: ${{ env.BUILD_TOOLS_VERSION }}
 
       - name: Rename signed APK
         run: |
