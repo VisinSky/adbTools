@@ -31,28 +31,37 @@ jobs:
           distribution: 'temurin'
           cache: gradle
 
+      # 修复Android SDK安装问题：
+      # 1. 改用更稳定的build-tools版本（33.0.2）
+      # 2. 规范packages参数格式（每个包单独一行）
+      # 3. 提前接受SDK许可，避免交互阻塞
+      - name: Accept Android SDK licenses
+        run: |
+          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses || true
+
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
         with:
+          # 规范格式：每个包单独一行，去掉多余换行/空格
           packages: |
-            build-tools;34.0.0
-            platforms;android-34
+            build-tools;33.0.2
+            platforms;android-33
             platform-tools
 
-      # 关键修复步骤：前置判断 Secrets 是否存在，输出标记变量
+      # 关键修复步骤：前置判断Secrets是否存在，输出标记变量
       - name: Check if keystore secrets exist
         id: check_secrets
         run: |
-          # 判断 KEYSTORE_BASE64 Secret 是否存在且非空
+          # 判断KEYSTORE_BASE64 Secret是否存在且非空
           if [ -z "${{ secrets.KEYSTORE_BASE64 }}" ] || [ "${{ secrets.KEYSTORE_BASE64 }}" = "" ]; then
             echo "is_first_run=true" >> $GITHUB_OUTPUT
-            echo "✅ 检测到无密钥 Secrets，将执行首次生成逻辑"
+            echo "✅ 检测到无密钥Secrets，将执行首次生成逻辑"
           else
             echo "is_first_run=false" >> $GITHUB_OUTPUT
-            echo "✅ 检测到密钥 Secrets，将执行还原签名逻辑"
+            echo "✅ 检测到密钥Secrets，将执行还原签名逻辑"
           fi
 
-      # 步骤1: 首次运行生成新密钥（仅 is_first_run=true 时执行）
+      # 步骤1: 首次运行生成新密钥（仅is_first_run=true时执行）
       - name: Generate Keystore (First Run Only)
         if: ${{ steps.check_secrets.outputs.is_first_run == 'true' }}
         run: |
@@ -83,24 +92,24 @@ jobs:
           echo "KEYSTORE_BASE64: $KEYSTORE_BASE64" >> $KEY_INFO_FILE
           
           # 输出提示（便于日志查看）
-          echo "✅ 首次运行：密钥库生成完成，信息已写入 $KEY_INFO_FILE"
+          echo "✅ 首次运行：密钥库生成完成，信息已写入$KEY_INFO_FILE"
           
           # 临时保存到环境变量，供后续步骤使用
           echo "KEYSTORE_PASSWORD=$KEYSTORE_PASSWORD" >> $GITHUB_ENV
           echo "KEY_PASSWORD=$KEY_PASSWORD" >> $GITHUB_ENV
           echo "KEYSTORE_BASE64=$KEYSTORE_BASE64" >> $GITHUB_ENV
 
-      # 步骤2: 后续运行读取 Secrets 还原密钥库（仅 is_first_run=false 时执行）
+      # 步骤2: 后续运行读取Secrets还原密钥库（仅is_first_run=false时执行）
       - name: Restore Keystore from Secrets (Subsequent Runs)
         if: ${{ steps.check_secrets.outputs.is_first_run == 'false' }}
         run: |
-          # 从 Secrets 读取 Base64 并还原密钥库文件
+          # 从Secrets读取Base64并还原密钥库文件
           echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > $KEYSTORE_FILE
           
           # 读取密码到环境变量
           echo "KEYSTORE_PASSWORD=${{ secrets.KEYSTORE_PASSWORD }}" >> $GITHUB_ENV
           echo "KEY_PASSWORD=${{ secrets.KEY_PASSWORD }}" >> $GITHUB_ENV
-          echo "✅ 后续运行：从 Secrets 还原密钥库完成"
+          echo "✅ 后续运行：从Secrets还原密钥库完成"
 
       # 步骤3: 提交密钥信息文件到仓库（仅首次运行）
       - name: Commit Keystore Info to Repo
@@ -111,7 +120,7 @@ jobs:
           git add $KEY_INFO_FILE
           git commit -m "chore: add keystore info file (auto-generated)"
           git push origin main
-          echo "✅ 密钥信息文件已提交到仓库，请立即查看并配置 Secrets！"
+          echo "✅ 密钥信息文件已提交到仓库，请立即查看并配置Secrets！"
 
       # 步骤4: 生成自动版本号
       - name: Generate version info
@@ -137,7 +146,7 @@ jobs:
           keyStoreFile: ${{ env.KEYSTORE_FILE }}
           keyStorePassword: ${{ env.KEYSTORE_PASSWORD }}
           keyPassword: ${{ env.KEY_PASSWORD }}
-          buildToolsVersion: 34.0.0
+          buildToolsVersion: 33.0.2 # 同步修改为33.0.2
 
       - name: Rename signed APK
         run: |
