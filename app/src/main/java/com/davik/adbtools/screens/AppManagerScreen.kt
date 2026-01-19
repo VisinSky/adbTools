@@ -799,6 +799,9 @@ fun loadApps(context: android.content.Context, dadbConnection: Adb?, scope: kotl
                 }
                 setApps(list); list.forEach { iconQueue.send(it) }
             }
-        } catch (e: Exception) { Log.e("ADB_LOAD", "Failed: ${e.message}") } finally { setLoading(false) }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            Log.e("ADB_LOAD", "Failed: ${e.message}") } finally { setLoading(false) }
+
     }
 }

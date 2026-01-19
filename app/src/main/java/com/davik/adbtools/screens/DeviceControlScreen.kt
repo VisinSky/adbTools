@@ -48,11 +48,10 @@ fun DeviceControlScreen(
     val featureList = listOf(
         FeatureItem("设备信息", Icons.Default.Info, Color(0xFF2196F3), "查看配置、电量、存储详情"),
         FeatureItem("App管理", Icons.Default.Apps, Color(0xFF4CAF50), "安装、卸载、提取 APK、冻结"),
-        FeatureItem("文件管理", Icons.Default.Folder, Color(0xFFFFC107), "浏览内部存储、上传下载文件"),
         FeatureItem("进程管理", Icons.Default.Memory, Color(0xFFF44336), "监控运行内存、结束卡死进程"),
         FeatureItem("虚拟遥控", Icons.Default.CastConnected, Color(0xFF9C27B0), "模拟按键、遥控器、输入文字"),
         FeatureItem("常用工具", Icons.Default.Build, Color(0xFFFF9800), "一键截图、重启设备、投屏"),
-        FeatureItem("shell命令", Icons.Default.Terminal, Color(0xFF607D8B), "执行自定义 ADB Shell 命令")
+        //FeatureItem("shell命令", Icons.Default.Terminal, Color(0xFF607D8B), "执行自定义 ADB Shell 命令")
     )
 
     Scaffold(

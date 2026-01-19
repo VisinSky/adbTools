@@ -432,7 +432,7 @@ suspend fun tryConnect(context: Context, ipStr: String): Boolean {
 
             // 3. 验证连接 (这一步能过才算真的连上了)
             val result = dadb.shell("echo connection_test").allOutput
-            Log.e("ADB_DEBUG", "🎉 TLS 连接验证成功！设备响应: $result")
+            Log.e("ADB_DEBUG", "🎉 TLS 连接验证成功！设备响应:")
 
             // 4. 保存连接 (必须！)
             AdbConnectionManager.setConnection(ipStr, dadb)
