@@ -1,0 +1,146 @@
+name: Build Signed adbTools APK (Auto Generate Keystore)
+
+on:
+  workflow_dispatch: # 仅支持手动触发，避免循环生成
+  push:
+    branches: [ main ]
+    paths-ignore: [ "keystore_info.txt" ] # 提交密钥信息文件时不触发
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # 必须授予写入仓库权限
+    env:
+      # 基础配置（可根据需要修改）
+      KEY_ALIAS: myadbkey
+      KEYSTORE_FILE: ./keystore.jks
+      CERT_DNAME: "CN=adbTools, OU=GitHubActions, O=VisinSky, L=Unknown, ST=Unknown, C=CN"
+      KEY_INFO_FILE: keystore_info.txt # 存储密钥信息的文本文件
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # 拉取完整历史，用于提交文件
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: gradle
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: |
+            build-tools;34.0.0
+            platforms;android-34
+            platform-tools
+
+      # 步骤1: 判断是否需要生成新密钥（无 Secrets 时首次生成）
+      - name: Generate Keystore (First Run Only)
+        if: ${{ !secrets.KEYSTORE_BASE64 }}
+        run: |
+          # 生成随机强密码（16位）
+          KEYSTORE_PASSWORD=$(openssl rand -hex 8)
+          KEY_PASSWORD=$KEYSTORE_PASSWORD
+          
+          # 非交互生成密钥库
+          keytool -genkey -v \
+            -keystore $KEYSTORE_FILE \
+            -alias $KEY_ALIAS \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -dname "$CERT_DNAME" \
+            -storepass $KEYSTORE_PASSWORD \
+            -keypass $KEY_PASSWORD \
+            -noprompt
+          
+          # 将密钥库转Base64编码（便于文本存储）
+          KEYSTORE_BASE64=$(base64 -w 0 $KEYSTORE_FILE)
+          
+          # 写入信息到文本文件（含Base64和密码）
+          echo "=== adbTools 密钥库信息（请妥善保管）===" > $KEY_INFO_FILE
+          echo "KEY_ALIAS: $KEY_ALIAS" >> $KEY_INFO_FILE
+          echo "KEYSTORE_PASSWORD: $KEYSTORE_PASSWORD" >> $KEY_INFO_FILE
+          echo "KEY_PASSWORD: $KEY_PASSWORD" >> $KEY_INFO_FILE
+          echo "KEYSTORE_BASE64: $KEYSTORE_BASE64" >> $KEY_INFO_FILE
+          
+          # 输出提示（便于日志查看）
+          echo "✅ 首次运行：密钥库生成完成，信息已写入 $KEY_INFO_FILE"
+          
+          # 临时保存到环境变量，供后续步骤使用
+          echo "KEYSTORE_PASSWORD=$KEYSTORE_PASSWORD" >> $GITHUB_ENV
+          echo "KEY_PASSWORD=$KEY_PASSWORD" >> $GITHUB_ENV
+          echo "KEYSTORE_BASE64=$KEYSTORE_BASE64" >> $GITHUB_ENV
+
+      # 步骤2: 后续运行读取 Secrets 还原密钥库
+      - name: Restore Keystore from Secrets (Subsequent Runs)
+        if: ${{ secrets.KEYSTORE_BASE64 }}
+        run: |
+          # 从 Secrets 读取 Base64 并还原密钥库文件
+          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > $KEYSTORE_FILE
+          
+          # 读取密码到环境变量
+          echo "KEYSTORE_PASSWORD=${{ secrets.KEYSTORE_PASSWORD }}" >> $GITHUB_ENV
+          echo "KEY_PASSWORD=${{ secrets.KEY_PASSWORD }}" >> $GITHUB_ENV
+          echo "✅ 后续运行：从 Secrets 还原密钥库完成"
+
+      # 步骤3: 提交密钥信息文件到仓库（仅首次运行）
+      - name: Commit Keystore Info to Repo
+        if: ${{ !secrets.KEYSTORE_BASE64 }}
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add $KEY_INFO_FILE
+          git commit -m "chore: add keystore info file (auto-generated)"
+          git push origin main
+          echo "✅ 密钥信息文件已提交到仓库，请立即查看并配置 Secrets！"
+
+      # 步骤4: 生成自动版本号
+      - name: Generate version info
+        id: version
+        run: |
+          echo "VERSION_NAME=1.0.${GITHUB_RUN_NUMBER}" >> $GITHUB_ENV
+          echo "VERSION_CODE=${GITHUB_RUN_NUMBER}" >> $GITHUB_ENV
+          echo "TAG_NAME=v1.0.${GITHUB_RUN_NUMBER}" >> $GITHUB_ENV
+
+      # 步骤5: 构建 + 签名 + 重命名 + 上传 + 发布 （和之前逻辑一致）
+      - name: Grant execute permission to gradlew
+        run: chmod +x gradlew
+
+      - name: Build unsigned Release APK
+        run: ./gradlew assembleRelease -PversionName=${{ env.VERSION_NAME }} -PversionCode=${{ env.VERSION_CODE }} --no-daemon
+
+      - name: Sign APK
+        id: sign_apk
+        uses: r0adkll/sign-android-release@v1
+        with:
+          releaseDirectory: app/build/outputs/apk/release
+          alias: ${{ env.KEY_ALIAS }}
+          keyStoreFile: ${{ env.KEYSTORE_FILE }}
+          keyStorePassword: ${{ env.KEYSTORE_PASSWORD }}
+          keyPassword: ${{ env.KEY_PASSWORD }}
+          buildToolsVersion: 34.0.0
+
+      - name: Rename signed APK
+        run: |
+          mv ${{ steps.sign_apk.outputs.signedReleaseFile }} app/build/outputs/apk/release/adbTools-v${{ env.VERSION_NAME }}-signed.apk
+
+      - name: Upload signed APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: adbTools-signed-apk-v${{ env.VERSION_NAME }}
+          path: app/build/outputs/apk/release/adbTools-v${{ env.VERSION_NAME }}-signed.apk
+
+      - name: Release to GitHub
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.TAG_NAME }}
+          files: app/build/outputs/apk/release/adbTools-v${{ env.VERSION_NAME }}-signed.apk
+          draft: false
+          prerelease: false
+          name: adbTools v${{ env.VERSION_NAME }} (Signed)
