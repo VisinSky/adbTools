@@ -1,23 +1,23 @@
 name: Build Signed adbTools APK (Auto Generate Keystore)
 
 on:
-  workflow_dispatch: # 仅支持手动触发，避免循环生成
+  workflow_dispatch: # 仅手动触发
   push:
     branches: [ main ]
-    paths-ignore: [ "keystore_info.txt" ] # 提交密钥信息文件时不触发
+    paths-ignore: [ "keystore_info.txt" ]
 
 jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: write # 必须授予写入仓库权限
+      contents: write
     env:
       # 基础配置
       KEY_ALIAS: myadbkey
       KEYSTORE_FILE: ./keystore.jks
       CERT_DNAME: "CN=adbTools, OU=GitHubActions, O=VisinSky, L=Unknown, ST=Unknown, C=CN"
       KEY_INFO_FILE: keystore_info.txt
-      # Android SDK 配置（手动指定稳定版本）
+      # Android SDK 配置
       ANDROID_HOME: /usr/local/lib/android/sdk
       ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
       BUILD_TOOLS_VERSION: 33.0.2
@@ -27,7 +27,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # 拉取完整历史，用于提交文件
+          fetch-depth: 0
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -36,23 +36,16 @@ jobs:
           distribution: 'temurin'
           cache: gradle
 
-      # 核心修复：手动安装 Android SDK（替代第三方Action）
+      # 手动安装Android SDK（稳定无兼容问题）
       - name: Manually install Android SDK components
         run: |
-          # 1. 配置环境变量，确保sdkmanager可执行
           export PATH=$ANDROID_HOME/cmdline-tools/latest/bin:$PATH
-          
-          # 2. 自动接受所有SDK许可（关键）
           echo "y" | sdkmanager --licenses || true
-          
-          # 3. 安装必要的SDK组件（稳定版本）
           echo "y" | sdkmanager "platform-tools" "platforms;${ANDROID_PLATFORM_VERSION}" "build-tools;${BUILD_TOOLS_VERSION}"
-          
-          # 4. 验证安装结果
           echo "✅ Android SDK 安装完成，已安装组件："
           sdkmanager --list_installed
 
-      # 关键步骤：前置判断Secrets是否存在，输出标记变量
+      # 判断Secrets是否存在，输出标记变量
       - name: Check if keystore secrets exist
         id: check_secrets
         run: |
@@ -64,11 +57,11 @@ jobs:
             echo "✅ 检测到密钥Secrets，将执行还原签名逻辑"
           fi
 
-      # 步骤1: 首次运行生成新密钥
+      # 首次运行生成新密钥
       - name: Generate Keystore (First Run Only)
         if: ${{ steps.check_secrets.outputs.is_first_run == 'true' }}
         run: |
-          # 生成随机强密码（16位）
+          # 生成随机16位密码
           KEYSTORE_PASSWORD=$(openssl rand -hex 8)
           KEY_PASSWORD=$KEYSTORE_PASSWORD
           
@@ -84,11 +77,11 @@ jobs:
             -keypass $KEY_PASSWORD \
             -noprompt
           
-          # 将密钥库转Base64编码
+          # 密钥库转Base64编码
           KEYSTORE_BASE64=$(base64 -w 0 $KEYSTORE_FILE)
           
           # 写入信息到文本文件
-          echo "=== adbTools 密钥库信息（请妥善保管）===" > $KEY_INFO_FILE
+          echo "=== adbTools 密钥库信息（请妥善保管，配置完Secrets后删除此文件）===" > $KEY_INFO_FILE
           echo "KEY_ALIAS: $KEY_ALIAS" >> $KEY_INFO_FILE
           echo "KEYSTORE_PASSWORD: $KEYSTORE_PASSWORD" >> $KEY_INFO_FILE
           echo "KEY_PASSWORD: $KEY_PASSWORD" >> $KEY_INFO_FILE
@@ -99,7 +92,7 @@ jobs:
           echo "KEY_PASSWORD=$KEY_PASSWORD" >> $GITHUB_ENV
           echo "KEYSTORE_BASE64=$KEYSTORE_BASE64" >> $GITHUB_ENV
 
-      # 步骤2: 后续运行读取Secrets还原密钥库
+      # 后续运行读取Secrets还原密钥库
       - name: Restore Keystore from Secrets (Subsequent Runs)
         if: ${{ steps.check_secrets.outputs.is_first_run == 'false' }}
         run: |
@@ -110,7 +103,7 @@ jobs:
           echo "KEYSTORE_PASSWORD=${{ secrets.KEYSTORE_PASSWORD }}" >> $GITHUB_ENV
           echo "KEY_PASSWORD=${{ secrets.KEY_PASSWORD }}" >> $GITHUB_ENV
 
-      # 步骤3: 提交密钥信息文件到仓库（仅首次运行）
+      # 提交密钥信息文件到仓库（仅首次运行）
       - name: Commit Keystore Info to Repo
         if: ${{ steps.check_secrets.outputs.is_first_run == 'true' }}
         run: |
@@ -119,8 +112,9 @@ jobs:
           git add $KEY_INFO_FILE
           git commit -m "chore: add keystore info file (auto-generated)"
           git push origin main
+          echo "✅ 密钥信息文件已提交到仓库，请立即查看并配置Secrets，配置完成后删除此文件！"
 
-      # 步骤4: 生成自动版本号
+      # 生成自动版本号
       - name: Generate version info
         id: version
         run: |
@@ -128,23 +122,25 @@ jobs:
           echo "VERSION_CODE=${GITHUB_RUN_NUMBER}" >> $GITHUB_ENV
           echo "TAG_NAME=v1.0.${GITHUB_RUN_NUMBER}" >> $GITHUB_ENV
 
-      # 步骤5: 构建 + 签名 + 上传 + 发布
+      # 构建 + 签名（核心修复：适配sign-android-release参数） + 上传 + 发布
       - name: Grant execute permission to gradlew
         run: chmod +x gradlew
 
       - name: Build unsigned Release APK
         run: ./gradlew assembleRelease -PversionName=${{ env.VERSION_NAME }} -PversionCode=${{ env.VERSION_CODE }} --no-daemon
 
+      # 修复签名步骤：移除无效参数，改用signingKeyBase64传递密钥库
       - name: Sign APK
         id: sign_apk
         uses: r0adkll/sign-android-release@v1
         with:
           releaseDirectory: app/build/outputs/apk/release
+          # 核心修改：用signingKeyBase64替代keyStoreFile（该Action的标准用法）
+          signingKeyBase64: ${{ env.KEYSTORE_BASE64 || secrets.KEYSTORE_BASE64 }}
           alias: ${{ env.KEY_ALIAS }}
-          keyStoreFile: ${{ env.KEYSTORE_FILE }}
           keyStorePassword: ${{ env.KEYSTORE_PASSWORD }}
           keyPassword: ${{ env.KEY_PASSWORD }}
-          buildToolsVersion: ${{ env.BUILD_TOOLS_VERSION }}
+          # 移除无效的buildToolsVersion参数
 
       - name: Rename signed APK
         run: |
