@@ -39,10 +39,22 @@ jobs:
             platforms;android-34
             platform-tools
 
-      # 步骤1: 判断是否需要生成新密钥（无 Secrets 时首次生成）
-      # 修复点：用 ${{ }} 完整包裹表达式，判断 Secrets 是否为空字符串
+      # 关键修复步骤：前置判断 Secrets 是否存在，输出标记变量
+      - name: Check if keystore secrets exist
+        id: check_secrets
+        run: |
+          # 判断 KEYSTORE_BASE64 Secret 是否存在且非空
+          if [ -z "${{ secrets.KEYSTORE_BASE64 }}" ] || [ "${{ secrets.KEYSTORE_BASE64 }}" = "" ]; then
+            echo "is_first_run=true" >> $GITHUB_OUTPUT
+            echo "✅ 检测到无密钥 Secrets，将执行首次生成逻辑"
+          else
+            echo "is_first_run=false" >> $GITHUB_OUTPUT
+            echo "✅ 检测到密钥 Secrets，将执行还原签名逻辑"
+          fi
+
+      # 步骤1: 首次运行生成新密钥（仅 is_first_run=true 时执行）
       - name: Generate Keystore (First Run Only)
-        if: ${{ !secrets.KEYSTORE_BASE64 || secrets.KEYSTORE_BASE64 == '' }}
+        if: ${{ steps.check_secrets.outputs.is_first_run == 'true' }}
         run: |
           # 生成随机强密码（16位）
           KEYSTORE_PASSWORD=$(openssl rand -hex 8)
@@ -78,10 +90,9 @@ jobs:
           echo "KEY_PASSWORD=$KEY_PASSWORD" >> $GITHUB_ENV
           echo "KEYSTORE_BASE64=$KEYSTORE_BASE64" >> $GITHUB_ENV
 
-      # 步骤2: 后续运行读取 Secrets 还原密钥库
-      # 修复点：用 ${{ }} 完整包裹表达式，判断 Secrets 非空
+      # 步骤2: 后续运行读取 Secrets 还原密钥库（仅 is_first_run=false 时执行）
       - name: Restore Keystore from Secrets (Subsequent Runs)
-        if: ${{ secrets.KEYSTORE_BASE64 && secrets.KEYSTORE_BASE64 != '' }}
+        if: ${{ steps.check_secrets.outputs.is_first_run == 'false' }}
         run: |
           # 从 Secrets 读取 Base64 并还原密钥库文件
           echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > $KEYSTORE_FILE
@@ -92,9 +103,8 @@ jobs:
           echo "✅ 后续运行：从 Secrets 还原密钥库完成"
 
       # 步骤3: 提交密钥信息文件到仓库（仅首次运行）
-      # 修复点：用 ${{ }} 完整包裹表达式
       - name: Commit Keystore Info to Repo
-        if: ${{ !secrets.KEYSTORE_BASE64 || secrets.KEYSTORE_BASE64 == '' }}
+        if: ${{ steps.check_secrets.outputs.is_first_run == 'true' }}
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
