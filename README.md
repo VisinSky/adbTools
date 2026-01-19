@@ -3,6 +3,8 @@
 [![License: GPL v3.0](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 [![Kotlin](https://img.shields.io/badge/Kotlin-1.9.0-purple.svg)](https://kotlinlang.org)
 
+这个项目起源是工作经常需要adb 抓日志、看性能等等操作，周六周末很多时候又不喜欢带电脑，于是我就问ai能不能做个app，ai给我推荐了kadb，dadb，最终发现kadb 符合我的要求，很多机器只有adb 配对。于是我就基于kadb 封装了一套apk界面
+这个只是最大满足我个人工作需求，如果你看到了这个项目，有需要的话，可以自行添加自己的功能。请勿用于非法用途。
 AdbTools 是一个基于 Kotlin 开发的高性能 Android 调试桥（ADB）的android app。它基于 [Kadb](https://github.com/flyfishxu/kadb) 构建，提供了比较方便的界面操作
 注意这个项目是ai做的，总共耗时不记得了，都是每天抽空做一做，如果你喜欢对你有用请star 下，如果发现代码有问题，崩溃卡顿，适配等问题请提交issues。目前只适配了我手上有的机器，其他的机器界面适配需要自行适配了。
 ## ✨ 功能特性 (Features)
